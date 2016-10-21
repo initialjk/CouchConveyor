@@ -16,60 +16,94 @@ namespace CouchStore
 		{
 			if (boundedCapacity > 0)  // Actually, I believe BlockingCollection(int) is already doing like this
 			{
-				this._queue = new BlockingCollection<T>(boundedCapacity);
+				_queue = new BlockingCollection<T>(boundedCapacity);
 			}
 			else
 			{
-				this._queue = new BlockingCollection<T>();
+				_queue = new BlockingCollection<T>();
+			}
+		}
+
+		public bool TryAdd(T entry)
+		{
+			return _queue.TryAdd(entry);
+		}
+
+		public bool BlockableAdd(T entry, int timeout_ms) {
+			if (timeout_ms == 0)
+			{
+				return _queue.TryAdd(entry);
+			}
+			else if (timeout_ms > 0)
+			{
+				return _queue.TryAdd(entry, timeout_ms);
+			}
+			else {
+				_queue.Add(entry);
+				return true;
 			}
 		}
 
 		internal bool TryTake(out T entry)
 		{
-			return this._queue.TryTake(out entry);
+			return _queue.TryTake(out entry);
+		}
+
+		internal T Take()
+		{
+			return _queue.Take();
 		}
 	}
 
-	public class ConcurrentDispatcher<T> where T : class
+	public abstract class ConcurrentDispatcher<T> where T : class
 	{
-		public ConcurrentWorkingQueue<T> WorkingQueue = new ConcurrentWorkingQueue<T>();
+		static log4net.ILog Logger = log4net.LogManager.GetLogger(System.Reflection.MethodBase.GetCurrentMethod().DeclaringType);
+
+		internal ConcurrentWorkingQueue<T> WorkingQueue = new ConcurrentWorkingQueue<T>();
 		public int Index { get; set; }
+		public Task Task { get; private set; }
 		public int MilliSecondsForCleanUp { get { return 1000; } }
 
 		private CancellationTokenSource _token_source = null;
 
-		public void Start()
+		public bool Start()
 		{
 			lock (this)
 			{
-				if (this._token_source != null)
+				if (_token_source != null)
 				{
-					throw new InvalidOperationException("Dispatcher is already running");
+					Logger.WarnFormat("Tried to start Dispatcher which is already started. Index={0}", this.Index);
+					return false;
 				}
-				this._token_source = new CancellationTokenSource();
+				_token_source = new CancellationTokenSource();
 
 				CancellationToken token = _token_source.Token;
-				Task.Factory.StartNew(async () => await this.DoDispatch(token), token);
+				this.Task = Task.Factory.StartNew(async () => await this.DoDispatch(token), token);
 			}
+			return true;
 		}
 
-		public void Stop()
+		public bool Stop()
 		{
 			lock (this)
 			{
-				if (this._token_source == null)
+				if (_token_source == null)
 				{
-					// Log : Already stopped
-					return;
+					Logger.WarnFormat("Tried to stop Dispatcher which is already stopped. Index={0}", this.Index);
+					return false;
 				}
 
-				this._token_source.CancelAfter(this.MilliSecondsForCleanUp);
+				_token_source.CancelAfter(this.MilliSecondsForCleanUp);
+				this.Task = null;
 			}
+			return true;
 		}
 
 		protected async Task DoDispatch(CancellationToken ct)
 		{
-			SetupDispatch();
+			if (false == SetupDispatch()) { 
+				throw new OperationCanceledException("Failed to setup dispatcher");
+			}
 
 			try
 			{
@@ -78,7 +112,13 @@ namespace CouchStore
 				{
 					if (this.WorkingQueue.TryTake(out entry))
 					{
-						this.Process(entry);
+						try
+						{
+							await this.Process(entry);
+						}
+						catch (Exception ex) {
+							Logger.Error(new object[]{"Dispatcher throws uncaught exception.", entry}, ex);
+						}
 					}
 					else
 					{
@@ -93,29 +133,51 @@ namespace CouchStore
 
 				lock (this)
 				{
-					if (this._token_source != null)
+					if (_token_source != null)
 					{
-						this._token_source.Dispose();
-						this._token_source = null;
+						_token_source.Dispose();
+						_token_source = null;
 					}
 				}
 			}
 		}
 		
-		protected virtual void SetupDispatch();
-		protected virtual void TeardownDispatch();
-		protected virtual bool Process(T entry);
+		protected abstract bool SetupDispatch();
+		protected abstract void TeardownDispatch();
+		protected abstract Task<bool> Process(T entry);
 	}
 
-	public interface IDispatcherFactory<T> where T : class {
-		ConcurrentDispatcher<T> CreateNew();
+	public abstract class IDispatcherFactory<T> where T : class {
+		public abstract ConcurrentDispatcher<T> CreateNew();
 	}
 
 	public class PooledDispatcherManager<T> where T : class {
-		private ConcurrentWorkingQueue<T> _working_queue = new ConcurrentWorkingQueue<T>(-1);
-		private List<ConcurrentDispatcher<T>> _pool = null;
+		private ConcurrentWorkingQueue<T> _working_queue = new ConcurrentWorkingQueue<T>(0);
+		private List<ConcurrentDispatcher<T>> _pool = new List<ConcurrentDispatcher<T>>();
 
 		private IDispatcherFactory<T> _dispatcher_factory = null;
+
+		public PooledDispatcherManager(IDispatcherFactory<T> factory, int workers = 1, int capacity = 0)
+		{
+			_dispatcher_factory = factory;
+			_working_queue = new ConcurrentWorkingQueue<T>(capacity);
+			this.Workers = workers;
+		}
+
+		public int StartAll()
+		{
+			lock (_pool)
+			{
+				return _pool.Sum((dispatcher) => (dispatcher.Start() ? 1 : 0));
+			}
+		}
+
+		public int StopAll() {
+			lock (_pool)
+			{
+				return _pool.Sum((dispatcher) => (dispatcher.Stop() ? 1 : 0));
+			}
+		}
 
 		public int Workers
 		{
@@ -125,36 +187,51 @@ namespace CouchStore
 			}
 			set
 			{
-				int count = _pool.Count;
-				if (count > value)
+				lock (_pool)
 				{
-					for (int i = value; i < count; ++i)
+					int count = _pool.Count;
+					if (count > value)
 					{
-						_pool[i].Stop();
+						for (int i = value; i < count; ++i)
+						{
+							_pool[i].Stop();
+							// Don't Dispose now. Let GC does it.
+						}
+						_pool.RemoveRange(value, count - value);
 					}
-					_pool.RemoveRange(value, count - value);
-				}
-				else if (count < value)
-				{
-					_pool.Capacity = value;
-					for (int i = count; i < value; ++i)
+					else if (count < value)
 					{
-						var new_dispatcher = this._dispatcher_factory.CreateNew();
-						new_dispatcher.Index = i;
-						new_dispatcher.WorkingQueue = this._working_queue;
-						_pool.Add(new_dispatcher);
+						_pool.Capacity = value;
+						for (int i = count; i < value; ++i)
+						{
+							var new_dispatcher = _dispatcher_factory.CreateNew();
+							new_dispatcher.Index = i;
+							new_dispatcher.WorkingQueue = _working_queue;
+							_pool.Add(new_dispatcher);
+						}
 					}
 				}
 			}
 		}
 
-		public PooledDispatcherManager(IDispatcherFactory<T> factory, int workers = 1, int capacity = 0)
-		{
-			this._dispatcher_factory = factory;
-			this.Workers = workers;
-			this._working_queue = new ConcurrentWorkingQueue<T>(capacity);
+		public bool TryAddEntry(T entry) {
+			return _working_queue.TryAdd(entry);
 		}
 
-		public 
+		public Task AddEntryAsync(T entry)
+		{
+			return Task.Run(() => _working_queue.BlockableAdd(entry, -1));
+		}
+
+		/// <summary>
+		/// This method can be blocked if working queue is fulled. It will be completed when dispatcher gets a entry from queue.
+		/// </summary>
+		/// <param name="entry">Entry to add</param>
+		/// <param name="timeout_ms">Milliseconds to wait</param>
+		/// <returns></returns>
+		public bool AddEntry(T entry, int timeout_ms=0)
+		{
+			return _working_queue.BlockableAdd(entry, timeout_ms);
+		}
 	}
 }

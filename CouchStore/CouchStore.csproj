@@ -30,6 +30,9 @@
     <WarningLevel>4</WarningLevel>
   </PropertyGroup>
   <ItemGroup>
+    <Reference Include="log4net">
+      <HintPath>..\packages\log4net.2.0.5\lib\net45-full\log4net.dll</HintPath>
+    </Reference>
     <Reference Include="MyCouch.Net45">
       <HintPath>..\packages\MyCouch.4.0.0\lib\net45\MyCouch.Net45.dll</HintPath>
     </Reference>
@@ -47,6 +50,7 @@
     <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="Pooling.cs" />
     <Compile Include="Store.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
   </ItemGroup>

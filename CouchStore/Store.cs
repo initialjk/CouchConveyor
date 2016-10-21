@@ -1,187 +1,324 @@
 ﻿using MyCouch;
+using MyCouch.Responses;
+using MyCouch.Serialization;
+using MyCouch.Serialization.Meta;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace CouchStore
 {
-	public class CouchStoreEntry {
+	public class CouchStoreEventHandler<T> where T : class
+	{
+		static log4net.ILog Logger = log4net.LogManager.GetLogger(System.Reflection.MethodBase.GetCurrentMethod().DeclaringType);
+
+		private static CouchStoreEventHandler<T> _default_instance = new CouchStoreEventHandler<T>();
+		public static CouchStoreEventHandler<T> Default { get { return _default_instance; } }
+
+		public delegate void StoredEventHandler(string id, string rev, T entity);
+		public delegate void FailedEventHandler(string id, T entity, Exception ex);
+
+		public event StoredEventHandler OnStoredEvent;
+		public event FailedEventHandler OnFailedEvent;
+
+		public void OnStored(string id, string rev, T entity)
+		{
+			Logger.DebugFormat("Object is stored: id=[{0}], rev=[{1}], entity=[{2}]", id, rev, entity);
+			OnStoredEvent(id, rev, entity);
+		}
+		public void OnFailed(string id, T entity, Exception ex)
+		{
+			Logger.DebugFormat("Failed to store object: id=[{0}], entity=[{1}], exception=[{2}]", id, entity, ex.Message);
+			OnFailedEvent(id, entity, ex);
+		}
+	}
+
+	public class InstantCouchStoreEventHandler<T> : CouchStoreEventHandler<T> where T : class
+	{
+		public InstantCouchStoreEventHandler(CouchStoreEventHandler<T>.StoredEventHandler on_stored = null, CouchStoreEventHandler<T>.FailedEventHandler on_failed = null)
+		{
+			if (on_stored != null)
+			{
+				this.OnStoredEvent += on_stored;
+			}
+			if (on_failed != null)
+			{
+				this.OnFailedEvent += on_failed;
+			}
+		}
+	}
+
+	public class CouchStoreWaitEventHandler<T> : CouchStoreEventHandler<T> where T : class
+	{
+		private EventWaitHandle _wait_handle;
+		public CouchStoreWaitEventHandler(EventWaitHandle wait_handle)
+		{
+			_wait_handle = wait_handle;
+			this.OnStoredEvent += delegate(string id, string revision, T entry)
+			{
+				_wait_handle.Set();
+			};
+			this.OnFailedEvent += delegate(string id, T entry, Exception ex)
+			{
+				_wait_handle.Set();
+			};
+		}	
+	}
+	
+	public class DefaultCouchStoreEventHandler : CouchStoreEventHandler<object>
+	{
+		private static DefaultCouchStoreEventHandler _default_instance = new DefaultCouchStoreEventHandler();
+		public static new DefaultCouchStoreEventHandler Default { get { return _default_instance; } }
+		public DefaultCouchStoreEventHandler()
+		{
+			this.OnStoredEvent += delegate(string id, string rev, object entity) { };
+			this.OnFailedEvent += delegate(string id, object entity, Exception ex) { };
+		}
+	}
+
+	public interface CouchStoreEntry
+	{
+		string Id { get; }
+	}
+
+	public class CouchStoreEntry<T> : CouchStoreEntry where T : class 
+	{
 		public string Id { get; private set; }
 		public int Hash { get; private set; }
-		public object Entity { get; private set; }
+		public T Entity { get; private set; }
+		public string Json { get; private set; }
+		public DateTime TimeStamp { get; private set; }
+		public bool Overwrite { get; set; }
+		public CouchStoreEventHandler<T> Handler { get; private set; }
 
-		public CouchStoreEntry(string id, object entity) {
+		public CouchStoreEntry(string id, T entity, string json = null, bool overwrite = true, CouchStoreEventHandler<T> handler = null)
+		{
 			this.Id = id;
 			this.Hash = id.GetHashCode();
 			this.Entity = entity;
-		}	
-	}
-		
-	public class CouchStoreTypedEntry<T> : CouchStoreEntry {
-		public T TypedEntity { get; private set; }
-		public CouchStoreTypedEntry(string id, T entity) : base(id, entity) {
-			TypedEntity = entity;
-		}	
-	}
-
-	public class CouchStoreWorkingQueue : IDisposable {	
-		private BlockingCollection<CouchStoreEntry> _working_queue = null;
-		public bool Active { get; set; }
-	
-		public CouchStoreWorkingQueue() {
-		Active = true;
-		}
-
-		public bool TryTake(out CouchStoreEntry entry)
-		{
- 			while(Active) {
-				if(_working_queue.TryTake(entry)) {
-				return true;
-				}
-				if (Active) {
-				await Task.Delay(100);
-				}
-			}			
-		}
-
-		public void Dispose() {
-			this.Active = false;
+			this.Json = json;
+			this.Overwrite = overwrite;
+			this.Handler = handler ?? CouchStoreEventHandler<T>.Default;
+			this.TimeStamp = DateTime.UtcNow;
 		}
 	}
 
-	public class CouchStoreDispatcher
+	public class CouchStoreDispatcher<T> : ConcurrentDispatcher<CouchStoreEntry<T>> where T : class 
 	{
+		static log4net.ILog Logger = log4net.LogManager.GetLogger(System.Reflection.MethodBase.GetCurrentMethod().DeclaringType);
+
 		public MyCouchClient Client { get; set; }
 		private DbConnectionInfo _connection_info = null;
-		private CouchStoreWorkingQueue _working_queue = new CouchStoreWorkingQueue();
-		private bool _working = false;
-		public int Index { get; private set; }
 
-		public CouchStoreDispatcher(DbConnectionInfo connection_info, CouchStoreWorkingQueue working_queue, int index) {
-			this._connection_info = connection_info;
-			this._working_queue = working_queue;
-			this.Index = index;
+		public CouchStoreDispatcher(DbConnectionInfo connection_info)
+		{
+			_connection_info = connection_info;
 		}
 
-		public void Start() {
-			this._working = true;
+		public async Task<DocumentHeaderResponse> TryPut(CouchStoreEntry<T> entry, string revision)
+		{
+			try
+			{
+				var header = await (revision == null ?
+					this.Client.Documents.PutAsync(entry.Id, entry.Json) :
+					this.Client.Documents.PutAsync(entry.Id, revision, entry.Json));
+				if (header.StatusCode == System.Net.HttpStatusCode.Conflict)
+				{
+					throw new MyCouchResponseException(header);
+				}
+				return header;
+			}
+			catch (MyCouchResponseException ex)
+			{
+				Logger.DebugFormat("Conflict during put document {0}:{1} by {2}", entry.Id, revision, ex);
+				if (entry.Overwrite)
+				{
+					return null;  // In this case, we will retry this outside so it's expected exception.
+				}
+				throw ex;
+			}
 		}
 
-		public void Stop() {
-			this._working = false;
+		private async Task<DocumentHeaderResponse> Store(CouchStoreEntry<T> entry, string revision)
+		{
+			var res = await TryPut(entry, revision);
+			if (res != null)
+			{
+				return res;
+			}
+
+			if (entry.Overwrite)
+			{
+				while (res == null)
+				{
+					var head = await this.Client.Documents.HeadAsync(entry.Id);
+					res = await TryPut(entry, head.Rev);  // We still have a change to get conflict by timing
+				}
+			}
+			return res;
 		}
 
-		protected void Dispatch() {
+		protected override async Task<bool> Process(CouchStoreEntry<T> entry)
+		{
 			if (this.Client == null)
 			{
-				this.Client = new MyCouchClient(this._connection_info);
+				Logger.ErrorFormat("CouchDb client is not ready to process: {0}", entry);
+				if (entry.Handler != null)
+				{
+					entry.Handler.OnFailed(entry.Id, entry.Entity, new InvalidOperationException("CouchDb client is not ready."));
+				}
+				return false;
 			}
 
-			CouchStoreEntry entry;
-			while (_working_queue.TryTake(out entry))
+			try
 			{
+				var header = await Store(entry, null);
+				if(header != null && header.IsSuccess) {
+					entry.Handler.OnStored(entry.Id, header.Rev, entry.Entity);
+					return true;
+				}
 				
+				throw new MyCouchResponseException(header);
 			}
+			catch (Exception ex)
+			{
+				entry.Handler.OnFailed(entry.Id, entry.Entity, ex);
+				return false;
+			}
+		}
 
-			if (this.Client != null) {
+		protected override bool SetupDispatch()
+		{
+			if (this.Client == null)
+			{
+				this.Client = new MyCouchClient(_connection_info);
+			}
+			return true;
+		}
+
+		protected override void TeardownDispatch()
+		{
+			if (this.Client != null)
+			{
 				this.Client.Dispose();
 				this.Client = null;
 			}
 		}
-		
-		public void PostStore(string id, object entity, Action on_success, Action on_failed)
-		{
-		}
 	}
 
-	public interface ICouchStoreCallback { 
-		public void OnStored(string id, string rev, object entity);
-		public void OnFailed(string id, object entity, Exception ex);
-	}
-
-	public interface ICouchStore : IDisposable
+	public class CouchStoreDispatcherFactory<T> : IDispatcherFactory<CouchStoreEntry<T>> where T : class 
 	{
-		public void PostStore(string id, object entity, ICouchStoreCallback callback = null);
-	}
+		protected DbConnectionInfo _connection_info = null;
 
-	public class PooledCouchStore {
-		public DbConnectionInfo _connection_info;
-		public List<CouchStoreDispatcher> _pool = null;
-		public BlockingCollection<CouchStoreEntry> _working_queue = new BlockingCollection<CouchStoreEntry>();
-
-		public int Workers
+		public CouchStoreDispatcherFactory(string serverAddress, string dbName)
 		{
-			get
-			{
-				return _pool.Count;
-			}
-			set
-			{
-				int count = _pool.Count;
-				if (count > value)
-				{
-					for (int i = value; i < value; ++i)
-					{
-						_pool[i].Stop();
-					}
-					_pool.RemoveRange(value, count - value);
-				}
-				else if (count < value)
-				{
-					_pool.Capacity = value;
-					for (int i = count; i < value; ++i)
-					{
-						_pool.Add(new CouchStoreDispatcher(DbConnectionInfo connection_info, BlockingCollection<CouchStoreEntry> working_queue, int index);
-					}
-				}
-				this._workers = value;
-			}
+			_connection_info = new DbConnectionInfo(serverAddress, dbName);
 		}
 
-		public PooledCouchStore(DbConnectionInfo connection_info, int workers = 1, int capacity = 0)
+		public override ConcurrentDispatcher<CouchStoreEntry<T>> CreateNew()
 		{
-			this._connection_info = connection_info;
-			this.Workers = workers;
-			if (capacity > 0)  // Actually, I believe BlockingCollection(int) is already doing like this
-			{
-				_working_queue = new BlockingCollection<CouchStoreEntry>(capacity);
-			}
-			else
-			{
-				_working_queue = new BlockingCollection<CouchStoreEntry>();
-			}
-		}
-
-		public void PostStore(string id, object entity, Action on_success, Action on_failed) {
-		
+			return new CouchStoreDispatcher<T>(_connection_info);
 		}
 	}
 
-	/// <summary>
-	/// Serialize 
-	/// </summary>
-	/// <typeparam name="T">Entity type</typeparam>
-	public class SerializedCouchStore<T> : ICouchStoreCallback where T : class
-    {
-		public delegate void StoredEventHandler(string id, string rev, T entity);
-		public delegate void FailedEventHandler(string id, T entity, Exception ex);
+	public class PooledCouchStore<T> : PooledDispatcherManager<CouchStoreEntry<T>> where T : class 
+	{
+		public ISerializer Serializer { get; private set; }
+		public MyCouchClientBootstrapper MyCouchClientBootstrapper { get; private set; }
 
-		public event StoredEventHandler OnStored;
-		public event FailedEventHandler OnFailed;
-
-		public ICouchStore CouchStore { get; set; }
-		public SerializedCouchStore(ICouchStore store, int capacity = 0)
+		public PooledCouchStore(IDispatcherFactory<CouchStoreEntry<T>> factory, int workers = 1, int capacity = 0)
+			: base(factory, workers, capacity)
 		{
-			this.CouchStore = store;
-		}
-		
-		public void Store(string id, T entity) {
-			if (this.CouchStore == null) {
-				this.OnFailed(id, entity, new InvalidOperationException("Try to store entry to not configured repository"));
+			if (factory == null)
+			{
+				throw new ArgumentNullException("factory");
 			}
+
+			// TODO: Extract this if we need to customize MyCouch
+			this.MyCouchClientBootstrapper = new MyCouchClientBootstrapper();
+			this.Serializer = this.MyCouchClientBootstrapper.SerializerFn();
 		}
-    }
+
+		public PooledCouchStore(string hostname, string dbname, int workers = 1, int capacity = 0)
+			: this(new CouchStoreDispatcherFactory<T>(hostname, dbname), workers, capacity)
+		{
+		}
+
+		public void Store(string id, T value, CouchStoreEventHandler<T> handler = null)
+		{
+			string json = this.Serializer.Serialize<T>(value);
+			StringBuilder builder = new StringBuilder(json.Substring(0, json.LastIndexOf('}')));
+			builder.AppendFormat(", {0}$timeStamp{0} : {1} {2}", '"', this.Serializer.ToJson(DateTime.UtcNow), '}');
+			json = builder.ToString();
+			// TODO: Add Timestamp to json
+			this.AddEntry(new CouchStoreEntry<T>(id, value, json, true, handler), -1); // find best method to call this. Current method AddEntry can block
+		}
+	}
+
+	public class CouchTaskSerializeContext
+	{
+		public string Id { get; set; }
+		public string Rev { get; set; }
+		public ConcurrentQueue<CouchStoreEntry> WaitingQueue { get; private set; }
+
+		public CouchTaskSerializeContext(string id)
+		{
+			if (String.IsNullOrEmpty(id))
+			{
+				throw new ArgumentNullException("id");
+			}
+			this.Id = id;
+			this.WaitingQueue = new ConcurrentQueue<CouchStoreEntry>();
+		}
+	}
+
+	public class CouchTaskSerializer
+	{
+		private ConcurrentDictionary<string, CouchTaskSerializeContext> _working_map = new ConcurrentDictionary<string, CouchTaskSerializeContext>();
+	}
+
+	public class CouchStoreSerializedDispatcher<T> : CouchStoreDispatcher<T> where T : class 
+	{
+		private CouchTaskSerializer _task_serializer;
+		public CouchStoreSerializedDispatcher(DbConnectionInfo connection_info, CouchTaskSerializer task_serializer)
+			: base(connection_info)
+		{
+			if (connection_info == null)
+			{
+				throw new ArgumentNullException("connection_info");
+			}
+			if (task_serializer == null)
+			{
+				throw new ArgumentNullException("task_serializer");
+			}
+			_task_serializer = task_serializer;
+		}
+	}
+
+	public class CouchStoreSerializedDispatcherFactory<T> : CouchStoreDispatcherFactory<T> where T : class 
+	{
+		private CouchTaskSerializer _task_serializer = new CouchTaskSerializer();
+
+		public CouchStoreSerializedDispatcherFactory(string serverAddress, string dbName)
+			: base(serverAddress, dbName)
+		{
+		}
+
+		public override ConcurrentDispatcher<CouchStoreEntry<T>> CreateNew()
+		{
+			return new CouchStoreSerializedDispatcher<T>(_connection_info, _task_serializer);
+		}
+	}
+
+	public class SerializedPooledCouchStore<T> : PooledCouchStore<T> where T : class 
+	{
+		public SerializedPooledCouchStore(string hostname, string dbname, int workers = 1, int capacity = 0)
+			: base(new CouchStoreSerializedDispatcherFactory<T>(hostname, dbname), workers, capacity)
+		{
+		}
+	}
 }
