@@ -28,12 +28,26 @@ namespace CouchStore
 		public void OnStored(string id, string rev, T entity)
 		{
 			Logger.DebugFormat("Object is stored: id=[{0}], rev=[{1}], entity=[{2}]", id, rev, entity);
-			OnStoredEvent(id, rev, entity);
+			try
+			{
+				OnStoredEvent(id, rev, entity);
+			}
+			catch (Exception ex)
+			{
+				Logger.Warn("Handler throws an exception on handling stored event", ex);
+			}
 		}
-		public void OnFailed(string id, T entity, Exception ex)
+		public void OnFailed(string id, T entity, Exception reason)
 		{
-			Logger.DebugFormat("Failed to store object: id=[{0}], entity=[{1}], exception=[{2}]", id, entity, ex.Message);
-			OnFailedEvent(id, entity, ex);
+			Logger.DebugFormat("Failed to store object: id=[{0}], entity=[{1}], exception=[{2}]", id, entity, reason.Message);
+			try
+			{
+				OnFailedEvent(id, entity, reason);
+			}
+			catch (Exception ex)
+			{
+				Logger.Warn("Handler throws an exception on handling failed event", ex);
+			}
 		}
 	}
 
