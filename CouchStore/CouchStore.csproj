@@ -51,6 +51,7 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="Pooling.cs" />
+    <Compile Include="StoreInOrder.cs" />
     <Compile Include="Store.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
   </ItemGroup>

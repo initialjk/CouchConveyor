@@ -78,7 +78,7 @@ namespace CouchStore
 				_token_source = new CancellationTokenSource();
 
 				CancellationToken token = _token_source.Token;
-				this.Task = Task.Factory.StartNew(async () => await this.DoDispatch(token), token);
+				this.Task = Task.Factory.StartNew(async (obj) => await this.DoDispatch(token), token, TaskCreationOptions.LongRunning);
 			}
 			return true;
 		}
@@ -107,22 +107,11 @@ namespace CouchStore
 
 			try
 			{
-				T entry;
 				while (ct.IsCancellationRequested == false)
 				{
-					if (this.WorkingQueue.TryTake(out entry))
-					{
-						try
-						{
-							await this.Process(entry);
-						}
-						catch (Exception ex) {
-							Logger.Error(new object[]{"Dispatcher throws uncaught exception.", entry}, ex);
-						}
-					}
-					else
-					{
-						await Task.Delay(100);
+					if (false == await TakeOneAndProcess())
+					{ 
+						await Task.Delay(100);  // If we didn't get an instance, take a brake.
 					}
 				}
 			}
@@ -140,6 +129,24 @@ namespace CouchStore
 					}
 				}
 			}
+		}
+
+		protected virtual async Task<bool> TakeOneAndProcess()
+		{
+			T entry = null;
+			if (this.WorkingQueue.TryTake(out entry))
+			{
+				try
+				{
+					await this.Process(entry);
+				}
+				catch (Exception ex)
+				{
+					Logger.Error(new object[] { "Dispatcher throws uncaught exception.", entry }, ex);
+				}
+				return true;
+			}
+			return false;
 		}
 		
 		protected abstract bool SetupDispatch();
