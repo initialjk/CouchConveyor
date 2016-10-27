@@ -9,6 +9,7 @@ using System.Threading.Tasks;
 using System.Collections.Concurrent;
 using MyCouch;
 using System.Linq;
+using System.Diagnostics;
 
 namespace UnitTest
 {
@@ -21,7 +22,8 @@ namespace UnitTest
 
 		public override bool Equals(object obj)
 		{
-			if (false == obj is TestInner) {
+			if (false == obj is TestInner)
+			{
 				return false;
 			}
 			var rhs = obj as TestInner;
@@ -33,6 +35,11 @@ namespace UnitTest
 				&& this.IntValue == rhs.IntValue
 				&& string.Equals(this.StringValue, rhs.StringValue)
 				&& Enumerable.SequenceEqual(this.IntArrayValue, rhs.IntArrayValue);
+		}
+
+		public override int GetHashCode()
+		{
+			return (Id ?? "").GetHashCode();
 		}
 	}
 
@@ -61,40 +68,26 @@ namespace UnitTest
 	[TestClass]
 	public class CouchStoreBasicFunctionTest
 	{
+		static log4net.ILog Logger = log4net.LogManager.GetLogger(System.Reflection.MethodBase.GetCurrentMethod().DeclaringType);
+
 		[AssemblyInitialize]
 		public static void Configure(TestContext tc)
 		{
-			log4net.Config.XmlConfigurator.Configure();
+			var debug_appender = new log4net.Appender.DebugAppender();
+			debug_appender.ImmediateFlush = true;
+			debug_appender.ActivateOptions();
+			var result = log4net.Config.BasicConfigurator.Configure(debug_appender);
 		}
 
-		public PooledCouchStore<TestEntry> CouchStore { get; set; }
 		public static string HOSTNAME = "http://localhost:5984";
 		public static string DATABASE = "test_db";
 
 		[ClassInitialize()]
 		public static void SetupTest(TestContext testContext)
 		{
-			//testContext.Properties["CouchStore"] = new PooledCouchStore<TestEntry>(new CouchStoreDispatcherFactory<TestEntry>(HOSTNAME, "test_db"), 10);
 		}
 
-		public CouchStoreBasicFunctionTest()
-		{
-			this.CouchStore = new PooledCouchStore<TestEntry>(HOSTNAME, DATABASE, 10);
-			this.CouchStore.StartAll();
-		}
-
-		private TestContext testContextInstance;
-		public TestContext TestContext
-		{
-			get
-			{
-				return testContextInstance;
-			}
-			set
-			{
-				testContextInstance = value;
-			}
-		}
+		public TestContext TestContext { get; set; }
 
 		#region Additional test attributes
 		//
@@ -118,39 +111,41 @@ namespace UnitTest
 		//
 		#endregion
 
-		public List<T> MakeList<T>(Func<int, T> creator, int from, int to)
+		public List<T> MakeList<T>(int from, int to, Func<int, T> creator)
 		{
 			return new List<T>(Enumerable.Range(from, to).Select(i => creator.Invoke(i)));
 		}
 
+		public static readonly Random Rand = new Random();
+
 		public TestEntry CreateTestEntry(string prefix, int index)
 		{
-			var rand = new Random();
 			var base_id = string.Format("{0}-{1}", prefix, index);
 			var temp_dict = new Dictionary<string, string>();
 			temp_dict[prefix] = base_id;
 			return new TestEntry
 			{
 				Id = base_id,
-				IntValue = rand.Next(),
+				IntValue = Rand.Next(),
 				StringValue = "Test String for " + base_id,
 				DateTimeValue = DateTime.UtcNow,
 				CustomValue = new TestInner
 				{
 					Id = base_id + ":CustomValue",
-					IntValue = rand.Next(),
+					IntValue = Rand.Next(),
 					StringValue = "Test nested value's string for " + base_id,
-					IntArrayValue = MakeList((i) => { return rand.Next(); }, 0, rand.Next(10)).ToArray(),
+					IntArrayValue = MakeList(0, Rand.Next(10), (i) => { return Rand.Next(); }).ToArray(),
 				},
-				ListValue = MakeList( (i) => {
+				ListValue = MakeList(0, Rand.Next(5), (i) =>
+				{
 					return new TestInner
 					{
 						Id = base_id + ":CustomList:" + i,
-						IntValue = rand.Next(),
+						IntValue = Rand.Next(),
 						StringValue = "Test nested lists's string for " + base_id + " - " + i,
-						IntArrayValue = MakeList((x) => { return rand.Next(); }, 0, rand.Next(10)).ToArray(),
+						IntArrayValue = MakeList(0, Rand.Next(10), (x) => { return Rand.Next(); }).ToArray(),
 					};
-				}, 0, rand.Next(0) ),
+				}),
 				DictionaryValue = temp_dict,
 			};
 		}
@@ -158,58 +153,112 @@ namespace UnitTest
 		[TestMethod]
 		public void TestStoreNestedEntry()
 		{
-			ManualResetEvent wait_event = new ManualResetEvent(false);
-			this.CouchStore.Store("TestPushEntry", CreateTestEntry("a-test-entry", 1), new TestWaitEventHandler(wait_event));
-			wait_event.WaitOne(30 * 1000);
-		}
+			var CouchStore = new SerializedPooledCouchStore<TestEntry>(HOSTNAME, DATABASE, 2);
+			CouchStore.StartAll();
 
-		private static int CompareTestEntryByIntValue(TestEntry x, TestEntry y)
-		{
-			return x.IntValue.CompareTo(y.IntValue);
+			ManualResetEvent wait_event = new ManualResetEvent(false);
+			CouchStore.Store("TestStoreNestedEntry", CreateTestEntry("a-test-entry", 1), new TestWaitEventHandler(wait_event));
+			wait_event.WaitOne(30 * 1000);
+
+			CouchStore.StopAll();
 		}
 
 		[TestMethod]
 		public void TestMassiveStoreEntries()
 		{
+			var iteration = 1000;
 			var entries = new List<TestEntry>(3000);
-			for (int i = 0; i < 1000; ++i)
+			for (int i = 0; i < iteration; ++i)
 			{
-				for (int n = 0; n < 5; ++n)
+				for (int n = 0; n < 10; ++n)
 				{
-					entries.Add(CreateTestEntry("massive-test-entry", i));
+					var entry = CreateTestEntry("massive-test-entry", i);
+					entry.StringValue += " :" + n;
+					entries.Add(entry);
 				}
 			}
-			entries.Sort(CompareTestEntryByIntValue); // shuffle randomly
+			entries.Sort(delegate(TestEntry x, TestEntry y) { return x.IntValue.CompareTo(y.IntValue); }); // shuffle randomly
 			
-			var wait_events = new ConcurrentBag<ManualResetEvent>();
-			Parallel.ForEach(entries, (entry) =>
+			
+			var CouchStore = new SerializedPooledCouchStore<TestEntry>(HOSTNAME, DATABASE, 1024);
+			CouchStore.StartAll();
+
+			var exceptions = new ConcurrentBag<Exception>();
+			int semaphore = 0;
+			foreach(var entry in entries)
 			{
-				var wait_event = new ManualResetEvent(false);
-				wait_events.Add(wait_event);
-				this.CouchStore.Store("TestPushEntry", entry, new TestWaitEventHandler(wait_event));
-			});
+				Interlocked.Increment(ref semaphore);
+				CouchStore.Store(entry.Id, entry, new InstantCouchStoreEventHandler<TestEntry>(
+					(string id, string rev, TestEntry entity) => 
+					{
+						Interlocked.Decrement(ref semaphore);
+					},
+					(string id, TestEntry entity, Exception ex) => 
+					{
+						Interlocked.Decrement(ref semaphore);
+						exceptions.Add(ex);
+					}
+				));
+			};
 
-			WaitHandle.WaitAll(wait_events.ToArray(), 30 * 1000);
-
-
-			Task.Run(async () =>
+			DateTime wait_started = DateTime.UtcNow;
+			int remains = semaphore;
+			while (semaphore > 0)
 			{
-				var couchdb = new MyCouchStore(HOSTNAME, DATABASE);
-				foreach (var entry in entries)
+				int snapshot = semaphore;
+				Thread.Sleep(1000);
+				Trace.WriteLine(string.Format("{0} tasks are remaining. {1} is processed", snapshot, remains - snapshot));
+				remains = snapshot;
+
+				if (exceptions.Count > 0)
 				{
-					var dbentry = await couchdb.GetByIdAsync<TestEntry>(entry.Id);
-					Assert.AreEqual(entry.Id, dbentry.Id);
-					var last_entry = entries.Where((e) => e.Id == entry.Id).OrderBy((e) => e.IntValue).Last();
-					Assert.AreEqual(entry.IntValue, dbentry.IntValue);
-					Assert.AreEqual(entry.IntNullValue, dbentry.IntNullValue);
-					Assert.AreEqual(entry.StringValue, dbentry.StringValue);
-					Assert.AreEqual(entry.StringNullValue, dbentry.StringNullValue);
-					Assert.AreEqual(entry.CustomValue, dbentry.CustomValue);
-					Assert.AreEqual(entry.CustomNullValue, dbentry.CustomNullValue);
-					Assert.AreEqual(entry.ListValue, dbentry.ListValue);
-					Assert.AreEqual(entry.DateTimeValue, dbentry.DateTimeValue);
+					throw exceptions.First();
 				}
-			}).Wait();
+				if ((DateTime.UtcNow - wait_started).Milliseconds > 30 * 1000)
+				{
+					throw new TimeoutException("Too long times to process");
+				}
+			}
+			
+			CouchStore.StopAll();
+
+			Trace.WriteLine(string.Format("Completed to store all test entries. Start checking it now"));
+			var mycouch_pool = new ConcurrentBag<MyCouchStore>(Enumerable.Range(0, 100).Select((i) => new MyCouchStore(HOSTNAME, DATABASE)));
+
+			semaphore = iteration;
+			var tasks = entries.Select((entry) => Task.Run(async () =>
+			{
+				MyCouchStore couchdb;
+				while (false == mycouch_pool.TryTake(out couchdb))
+				{
+					await Task.Delay(100);
+				}
+				var dbentry = await couchdb.GetByIdAsync<TestEntry>(entry.Id);
+				mycouch_pool.Add(couchdb);
+				couchdb = null;
+
+				Assert.AreEqual(entry.Id, dbentry.Id);
+				var last_entry = entries.Where((e) => e.Id == entry.Id).Last();
+				if (last_entry.IntValue != dbentry.IntValue) {
+					var es = entries.Where((e) => e.Id == entry.Id);
+					Trace.WriteLine(string.Format("Entry '{0}' has stored incorrectly: {1}", entry.Id, es.ToString()));
+				}
+				Assert.AreEqual(last_entry.IntValue, dbentry.IntValue);
+				Assert.AreEqual(last_entry.IntNullValue, dbentry.IntNullValue);
+				Assert.AreEqual(last_entry.StringValue, dbentry.StringValue);
+				Assert.AreEqual(last_entry.StringNullValue, dbentry.StringNullValue);
+				Assert.AreEqual(last_entry.CustomValue, dbentry.CustomValue);
+				Assert.AreEqual(last_entry.CustomNullValue, dbentry.CustomNullValue);
+				Assert.AreEqual(last_entry.DateTimeValue.ToString(), dbentry.DateTimeValue.ToString());
+				CollectionAssert.AreEqual(last_entry.ListValue, dbentry.ListValue);
+			}));
+
+			Task.WaitAll(tasks.ToArray());
+			foreach (var c in mycouch_pool) {
+				c.Dispose();
+			}
+
 		}
 	}
 }
+

@@ -24,7 +24,7 @@ namespace CouchStore
 
 		public event StoredEventHandler OnStoredEvent;
 		public event FailedEventHandler OnFailedEvent;
-
+		
 		public void OnStored(string id, string rev, T entity)
 		{
 			Logger.DebugFormat("Object is stored: id=[{0}], rev=[{1}], entity=[{2}]", id, rev, entity);
@@ -140,16 +140,16 @@ namespace CouchStore
 				var header = await (revision == null ?
 					this.Client.Documents.PutAsync(entry.Id, entry.Json) :
 					this.Client.Documents.PutAsync(entry.Id, revision, entry.Json));
-				if (header.StatusCode == System.Net.HttpStatusCode.Conflict)
+				if (header.StatusCode == System.Net.HttpStatusCode.Conflict && entry.Overwrite)
 				{
-					throw new MyCouchResponseException(header);
+					return null;  // In this case, we will retry this outside so it's expected exception.
 				}
 				return header;
 			}
 			catch (MyCouchResponseException ex)
 			{
-				Logger.DebugFormat("Conflict during put document {0}:{1} by {2}", entry.Id, revision, ex);
-				if (entry.Overwrite)
+				Logger.DebugFormat("Error during put document {0}:{1} by {2}", entry.Id, revision, ex);
+				if (ex.HttpStatus == System.Net.HttpStatusCode.Conflict && entry.Overwrite)
 				{
 					return null;  // In this case, we will retry this outside so it's expected exception.
 				}
@@ -157,8 +157,14 @@ namespace CouchStore
 			}
 		}
 
-		private async Task<DocumentHeaderResponse> Store(CouchStoreEntry<T> entry, string revision)
+		public async Task<DocumentHeaderResponse> Store(CouchStoreEntry<T> entry, string revision)
 		{
+			if (this.Client == null)
+			{
+				Logger.ErrorFormat("CouchDb client is not ready to process: {0}", entry);
+				throw new InvalidOperationException("CouchDb client is not ready.");
+			}
+
 			var res = await TryPut(entry, revision);
 			if (res != null)
 			{
@@ -170,7 +176,7 @@ namespace CouchStore
 				while (res == null)
 				{
 					var head = await this.Client.Documents.HeadAsync(entry.Id);
-					res = await TryPut(entry, head.Rev);  // We still have a change to get conflict by timing
+					res = await TryPut(entry, head.Rev);  // We still have a chance to get conflict by timing
 				}
 			}
 			return res;
@@ -178,16 +184,6 @@ namespace CouchStore
 
 		protected override async Task<bool> Process(CouchStoreEntry<T> entry)
 		{
-			if (this.Client == null)
-			{
-				Logger.ErrorFormat("CouchDb client is not ready to process: {0}", entry);
-				if (entry.Handler != null)
-				{
-					entry.Handler.OnFailed(entry.Id, entry.Entity, new InvalidOperationException("CouchDb client is not ready."));
-				}
-				return false;
-			}
-
 			try
 			{
 				var header = await Store(entry, null);
@@ -262,77 +258,18 @@ namespace CouchStore
 		{
 		}
 
-		public void Store(string id, T value, CouchStoreEventHandler<T> handler = null)
-		{
-			string json = this.Serializer.Serialize<T>(value);
+		public string Serialize(T entity) {
+			string json = this.Serializer.Serialize<T>(entity);
+			// TODO: Implement custom serializer and do this on it
 			StringBuilder builder = new StringBuilder(json.Substring(0, json.LastIndexOf('}')));
 			builder.AppendFormat(", {0}$timeStamp{0} : {1} {2}", '"', this.Serializer.ToJson(DateTime.UtcNow), '}');
-			json = builder.ToString();
-			// TODO: Add Timestamp to json
+			return builder.ToString();
+		}
+
+		public void Store(string id, T value, CouchStoreEventHandler<T> handler = null)
+		{
+			string json = Serialize(value); // Serialize on synchronized context to store 'as-is' status
 			this.AddEntry(new CouchStoreEntry<T>(id, value, json, true, handler), -1); // find best method to call this. Current method AddEntry can block
-		}
-	}
-
-	public class CouchTaskSerializeContext
-	{
-		public string Id { get; set; }
-		public string Rev { get; set; }
-		public ConcurrentQueue<CouchStoreEntry> WaitingQueue { get; private set; }
-
-		public CouchTaskSerializeContext(string id)
-		{
-			if (String.IsNullOrEmpty(id))
-			{
-				throw new ArgumentNullException("id");
-			}
-			this.Id = id;
-			this.WaitingQueue = new ConcurrentQueue<CouchStoreEntry>();
-		}
-	}
-
-	public class CouchTaskSerializer
-	{
-		private ConcurrentDictionary<string, CouchTaskSerializeContext> _working_map = new ConcurrentDictionary<string, CouchTaskSerializeContext>();
-	}
-
-	public class CouchStoreSerializedDispatcher<T> : CouchStoreDispatcher<T> where T : class 
-	{
-		private CouchTaskSerializer _task_serializer;
-		public CouchStoreSerializedDispatcher(DbConnectionInfo connection_info, CouchTaskSerializer task_serializer)
-			: base(connection_info)
-		{
-			if (connection_info == null)
-			{
-				throw new ArgumentNullException("connection_info");
-			}
-			if (task_serializer == null)
-			{
-				throw new ArgumentNullException("task_serializer");
-			}
-			_task_serializer = task_serializer;
-		}
-	}
-
-	public class CouchStoreSerializedDispatcherFactory<T> : CouchStoreDispatcherFactory<T> where T : class 
-	{
-		private CouchTaskSerializer _task_serializer = new CouchTaskSerializer();
-
-		public CouchStoreSerializedDispatcherFactory(string serverAddress, string dbName)
-			: base(serverAddress, dbName)
-		{
-		}
-
-		public override ConcurrentDispatcher<CouchStoreEntry<T>> CreateNew()
-		{
-			return new CouchStoreSerializedDispatcher<T>(_connection_info, _task_serializer);
-		}
-	}
-
-	public class SerializedPooledCouchStore<T> : PooledCouchStore<T> where T : class 
-	{
-		public SerializedPooledCouchStore(string hostname, string dbname, int workers = 1, int capacity = 0)
-			: base(new CouchStoreSerializedDispatcherFactory<T>(hostname, dbname), workers, capacity)
-		{
 		}
 	}
 }
