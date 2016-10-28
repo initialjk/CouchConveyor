@@ -24,13 +24,16 @@ namespace CouchStore
 
 		public event StoredEventHandler OnStoredEvent;
 		public event FailedEventHandler OnFailedEvent;
-		
+
 		public void OnStored(string id, string rev, T entity)
 		{
 			Logger.DebugFormat("Object is stored: id=[{0}], rev=[{1}], entity=[{2}]", id, rev, entity);
 			try
 			{
-				OnStoredEvent(id, rev, entity);
+				if (OnStoredEvent != null)
+				{
+					OnStoredEvent(id, rev, entity);
+				}
 			}
 			catch (Exception ex)
 			{
@@ -42,7 +45,10 @@ namespace CouchStore
 			Logger.DebugFormat("Failed to store object: id=[{0}], entity=[{1}], exception=[{2}]", id, entity, reason.Message);
 			try
 			{
-				OnFailedEvent(id, entity, reason);
+				if (OnFailedEvent != null)
+				{
+					OnFailedEvent(id, entity, reason);
+				}
 			}
 			catch (Exception ex)
 			{
@@ -80,9 +86,9 @@ namespace CouchStore
 			{
 				_wait_handle.Set();
 			};
-		}	
+		}
 	}
-	
+
 	public class DefaultCouchStoreEventHandler : CouchStoreEventHandler<object>
 	{
 		private static DefaultCouchStoreEventHandler _default_instance = new DefaultCouchStoreEventHandler();
@@ -99,7 +105,7 @@ namespace CouchStore
 		string Id { get; }
 	}
 
-	public class CouchStoreEntry<T> : CouchStoreEntry where T : class 
+	public class CouchStoreEntry<T> : CouchStoreEntry where T : class
 	{
 		public string Id { get; private set; }
 		public int Hash { get; private set; }
@@ -121,7 +127,7 @@ namespace CouchStore
 		}
 	}
 
-	public class CouchStoreDispatcher<T> : ConcurrentDispatcher<CouchStoreEntry<T>> where T : class 
+	public class CouchStoreDispatcher<T> : ConcurrentDispatcher<CouchStoreEntry<T>> where T : class
 	{
 		static log4net.ILog Logger = log4net.LogManager.GetLogger(System.Reflection.MethodBase.GetCurrentMethod().DeclaringType);
 
@@ -187,11 +193,12 @@ namespace CouchStore
 			try
 			{
 				var header = await Store(entry, null);
-				if(header != null && header.IsSuccess) {
+				if (header != null && header.IsSuccess)
+				{
 					entry.Handler.OnStored(entry.Id, header.Rev, entry.Entity);
 					return true;
 				}
-				
+
 				throw new MyCouchResponseException(header);
 			}
 			catch (Exception ex)
@@ -205,7 +212,31 @@ namespace CouchStore
 		{
 			if (this.Client == null)
 			{
-				this.Client = new MyCouchClient(_connection_info);
+				this.Client = new MyCouchClient(this._connection_info);
+
+				var task = this.Client.Database.GetAsync();
+				task.Wait();
+				if (false == task.Result.IsSuccess)
+				{
+					if (task.Result.StatusCode == System.Net.HttpStatusCode.Conflict)
+					{
+						Logger.WarnFormat("Some other dispatcher already made db {0} by {1}", this._connection_info, task.Result);
+					}
+					else if (task.Result.StatusCode == System.Net.HttpStatusCode.NotFound)
+					{
+						var put_task = this.Client.Database.PutAsync();
+						put_task.Wait();
+						if (false == put_task.Result.IsSuccess)
+						{
+							Logger.ErrorFormat("Can't connect or create CouchDB {0} by {1}", this._connection_info, put_task.Result);
+							return false;
+						}
+					}
+					else
+					{
+						return false;
+					}
+				}
 			}
 			return true;
 		}
@@ -220,7 +251,7 @@ namespace CouchStore
 		}
 	}
 
-	public class CouchStoreDispatcherFactory<T> : IDispatcherFactory<CouchStoreEntry<T>> where T : class 
+	public class CouchStoreDispatcherFactory<T> : IDispatcherFactory<CouchStoreEntry<T>> where T : class
 	{
 		protected DbConnectionInfo _connection_info = null;
 
@@ -235,12 +266,17 @@ namespace CouchStore
 		}
 	}
 
-	public class PooledCouchStore<T> : PooledDispatcherManager<CouchStoreEntry<T>> where T : class 
+	public class PooledCouchConveyor<T> : PooledDispatcherManager<CouchStoreEntry<T>> where T : class
 	{
 		public ISerializer Serializer { get; private set; }
 		public MyCouchClientBootstrapper MyCouchClientBootstrapper { get; private set; }
 
-		public PooledCouchStore(IDispatcherFactory<CouchStoreEntry<T>> factory, int workers = 1, int capacity = 0)
+		public KeyValuePair<string, string> KeyValue<V>(string key, V value)
+		{
+			return new KeyValuePair<string, string>(key, this.Serializer.ToJson(value));
+		}
+
+		public PooledCouchConveyor(IDispatcherFactory<CouchStoreEntry<T>> factory, int workers = 1, int capacity = 0)
 			: base(factory, workers, capacity)
 		{
 			if (factory == null)
@@ -253,20 +289,31 @@ namespace CouchStore
 			this.Serializer = this.MyCouchClientBootstrapper.SerializerFn();
 		}
 
-		public PooledCouchStore(string hostname, string dbname, int workers = 1, int capacity = 0)
+		public PooledCouchConveyor(string hostname, string dbname, int workers = 1, int capacity = 0)
 			: this(new CouchStoreDispatcherFactory<T>(hostname, dbname), workers, capacity)
 		{
+			this.Name = string.Format("{0}/{1}", hostname, dbname);
 		}
 
-		public string Serialize(T entity) {
-			string json = this.Serializer.Serialize<T>(entity);
-			// TODO: Implement custom serializer and do this on it
-			StringBuilder builder = new StringBuilder(json.Substring(0, json.LastIndexOf('}')));
-			builder.AppendFormat(", {0}$timeStamp{0} : {1} {2}", '"', this.Serializer.ToJson(DateTime.UtcNow), '}');
-			return builder.ToString();
+		public string Serialize(T entity)
+		{
+			string json = (entity is string) ? entity as string : this.Serializer.Serialize<T>(entity);
+			return InjectVariablesIntoJson(json, KeyValue("$timestamp", DateTime.UtcNow));
 		}
 
-		public void Store(string id, T value, CouchStoreEventHandler<T> handler = null)
+		// TODO: Implement custom serializer and do this on it
+		public string InjectVariablesIntoJson(string source, params KeyValuePair<string, string>[] properties)
+		{
+			StringBuilder builder = new StringBuilder();
+			foreach (var p in properties)
+			{
+				builder.AppendFormat(", \"{0}\":{1}", p.Key, p.Value);
+			}
+
+			return source.Insert(source.LastIndexOf('}'), builder.ToString());
+		}
+
+		public void Convey(string id, T value, CouchStoreEventHandler<T> handler = null)
 		{
 			string json = Serialize(value); // Serialize on synchronized context to store 'as-is' status
 			this.AddEntry(new CouchStoreEntry<T>(id, value, json, true, handler), -1); // find best method to call this. Current method AddEntry can block

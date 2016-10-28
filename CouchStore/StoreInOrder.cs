@@ -189,9 +189,9 @@ namespace CouchStore
 		}
 	}
 
-	public class SerializedPooledCouchStore<T> : PooledCouchStore<T> where T : class
+	public class OrderedPooledCouchConveyor<T> : PooledCouchConveyor<T> where T : class
 	{
-		public SerializedPooledCouchStore(string hostname, string dbname, int workers = 1, int capacity = 0)
+		public OrderedPooledCouchConveyor(string hostname, string dbname, int workers = 1, int capacity = 0)
 			: base(new CouchStoreSerializedDispatcherFactory<T>(hostname, dbname), workers, capacity)
 		{
 		}

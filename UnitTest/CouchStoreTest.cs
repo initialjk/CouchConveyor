@@ -153,11 +153,11 @@ namespace UnitTest
 		[TestMethod]
 		public void TestStoreNestedEntry()
 		{
-			var CouchStore = new SerializedPooledCouchStore<TestEntry>(HOSTNAME, DATABASE, 2);
+			var CouchStore = new OrderedPooledCouchConveyor<TestEntry>(HOSTNAME, DATABASE, 2);
 			CouchStore.StartAll();
 
 			ManualResetEvent wait_event = new ManualResetEvent(false);
-			CouchStore.Store("TestStoreNestedEntry", CreateTestEntry("a-test-entry", 1), new TestWaitEventHandler(wait_event));
+			CouchStore.Convey("TestStoreNestedEntry", CreateTestEntry("a-test-entry", 1), new TestWaitEventHandler(wait_event));
 			wait_event.WaitOne(30 * 1000);
 
 			CouchStore.StopAll();
@@ -178,22 +178,22 @@ namespace UnitTest
 				}
 			}
 			entries.Sort(delegate(TestEntry x, TestEntry y) { return x.IntValue.CompareTo(y.IntValue); }); // shuffle randomly
-			
-			
-			var CouchStore = new SerializedPooledCouchStore<TestEntry>(HOSTNAME, DATABASE, 1024);
+
+
+			var CouchStore = new OrderedPooledCouchConveyor<TestEntry>(HOSTNAME, DATABASE, 1024);
 			CouchStore.StartAll();
 
 			var exceptions = new ConcurrentBag<Exception>();
 			int semaphore = 0;
-			foreach(var entry in entries)
+			foreach (var entry in entries)
 			{
 				Interlocked.Increment(ref semaphore);
-				CouchStore.Store(entry.Id, entry, new InstantCouchStoreEventHandler<TestEntry>(
-					(string id, string rev, TestEntry entity) => 
+				CouchStore.Convey(entry.Id, entry, new InstantCouchStoreEventHandler<TestEntry>(
+					(string id, string rev, TestEntry entity) =>
 					{
 						Interlocked.Decrement(ref semaphore);
 					},
-					(string id, TestEntry entity, Exception ex) => 
+					(string id, TestEntry entity, Exception ex) =>
 					{
 						Interlocked.Decrement(ref semaphore);
 						exceptions.Add(ex);
@@ -219,7 +219,7 @@ namespace UnitTest
 					throw new TimeoutException("Too long times to process");
 				}
 			}
-			
+
 			CouchStore.StopAll();
 
 			Trace.WriteLine(string.Format("Completed to store all test entries. Start checking it now"));
@@ -239,7 +239,8 @@ namespace UnitTest
 
 				Assert.AreEqual(entry.Id, dbentry.Id);
 				var last_entry = entries.Where((e) => e.Id == entry.Id).Last();
-				if (last_entry.IntValue != dbentry.IntValue) {
+				if (last_entry.IntValue != dbentry.IntValue)
+				{
 					var es = entries.Where((e) => e.Id == entry.Id);
 					Trace.WriteLine(string.Format("Entry '{0}' has stored incorrectly: {1}", entry.Id, es.ToString()));
 				}
@@ -254,11 +255,11 @@ namespace UnitTest
 			}));
 
 			Task.WaitAll(tasks.ToArray());
-			foreach (var c in mycouch_pool) {
+			foreach (var c in mycouch_pool)
+			{
 				c.Dispose();
 			}
 
 		}
 	}
 }
-
