@@ -5,13 +5,10 @@ using Microsoft.VisualStudio.TestTools.UnitTesting;
 
 namespace UnitTest
 {
-	/// <summary>
-	/// Summary description for CouchStoreConfigTest
-	/// </summary>
 	[TestClass]
-	public class CouchStoreConfigTest
+	public class CouchConveyorConfigTest
 	{
-		public CouchStoreConfigTest()
+		public CouchConveyorConfigTest()
 		{
 			//
 			// TODO: Add constructor logic here

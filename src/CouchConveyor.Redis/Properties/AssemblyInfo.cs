@@ -5,11 +5,11 @@ using System.Runtime.InteropServices;
 // General Information about an assembly is controlled through the following 
 // set of attributes. Change these attribute values to modify the information
 // associated with an assembly.
-[assembly: AssemblyTitle("CouchStore.Redis")]
-[assembly: AssemblyDescription("")]
+[assembly: AssemblyTitle("CouchConveyor.Redis")]
+[assembly: AssemblyDescription("This is simple Redis reactive utilities that interacts with CouchConveyor.")]
 [assembly: AssemblyConfiguration("")]
-[assembly: AssemblyCompany("")]
-[assembly: AssemblyProduct("CouchStore.Redis")]
+[assembly: AssemblyCompany("Jaekang Lee")]
+[assembly: AssemblyProduct("CouchConveyor.Redis")]
 [assembly: AssemblyCopyright("Copyright ©  2016")]
 [assembly: AssemblyTrademark("")]
 [assembly: AssemblyCulture("")]

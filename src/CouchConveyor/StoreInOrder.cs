@@ -7,14 +7,14 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace CouchStore
+namespace CouchConveyor
 {
 	public class CouchTaskSerializeContext<T> where T : class
 	{
 		public string Id { get; set; }
 		public string Rev { get; set; }
-		public ConcurrentQueue<CouchStoreEntry<T>> WaitingQueue { get; private set; }
-		public ConcurrentQueue<CouchStoreEntry<T>> ProcessedQueue { get; private set; }
+		public ConcurrentQueue<CouchConveyEntry<T>> WaitingQueue { get; private set; }
+		public ConcurrentQueue<CouchConveyEntry<T>> ProcessedQueue { get; private set; }
 		public ConcurrentQueue<Tuple<int, int>> ProcessedContext { get; private set; }
 		public ConcurrentQueue<Tuple<int, int>> LockRace { get; private set; }
 
@@ -28,8 +28,8 @@ namespace CouchStore
 				throw new ArgumentNullException("id");
 			}
 			this.Id = id;
-			this.WaitingQueue = new ConcurrentQueue<CouchStoreEntry<T>>();
-			this.ProcessedQueue = new ConcurrentQueue<CouchStoreEntry<T>>();
+			this.WaitingQueue = new ConcurrentQueue<CouchConveyEntry<T>>();
+			this.ProcessedQueue = new ConcurrentQueue<CouchConveyEntry<T>>();
 			this.ProcessedContext = new ConcurrentQueue<Tuple<int, int>>();
 			this.LockRace = new ConcurrentQueue<Tuple<int, int>>();
 			this._lock_seq = this._lock_id = 0;
@@ -65,7 +65,7 @@ namespace CouchStore
 			return (original == 0 && this._lock_id == lock_seq) ? (int?)lock_seq : null;
 		}
 
-		internal void Processed(CouchStoreEntry<T> t)
+		internal void Processed(CouchConveyEntry<T> t)
 		{
 			ProcessedQueue.Enqueue(t);
 			ProcessedContext.Enqueue(Tuple.Create(this._lock_seq, this._lock_id));
@@ -76,7 +76,7 @@ namespace CouchStore
 	{
 		private ConcurrentDictionary<string, CouchTaskSerializeContext<T>> _working_map = new ConcurrentDictionary<string, CouchTaskSerializeContext<T>>();
 
-		public CouchTaskSerializeContext<T> GetContextFor(CouchStoreEntry<T> entry)
+		public CouchTaskSerializeContext<T> GetContextFor(CouchConveyEntry<T> entry)
 		{
 			CouchTaskSerializeContext<T> context;
 			if (_working_map.TryGetValue(entry.Id, out context))
@@ -88,12 +88,12 @@ namespace CouchStore
 		}
 	}
 
-	public class CouchStoreSerializedDispatcher<T> : CouchStoreDispatcher<T> where T : class
+	public class CouchConveyorSerializedDispatcher<T> : CouchConveyorDispatcher<T> where T : class
 	{
 		static log4net.ILog Logger = log4net.LogManager.GetLogger(System.Reflection.MethodBase.GetCurrentMethod().DeclaringType);
 
 		private CouchTaskSerializer<T> _task_serializer;
-		public CouchStoreSerializedDispatcher(DbConnectionInfo connection_info, CouchTaskSerializer<T> task_serializer)
+		public CouchConveyorSerializedDispatcher(DbConnectionInfo connection_info, CouchTaskSerializer<T> task_serializer)
 			: base(connection_info)
 		{
 			if (connection_info == null)
@@ -111,7 +111,7 @@ namespace CouchStore
 		//        and `context.WaitingQueue.Enqueue(entry);`. But this is too rough. Let me polish this later.
 		protected override async Task<bool> TakeOneAndProcess()
 		{
-			CouchStoreEntry<T> entry = null;
+			CouchConveyEntry<T> entry = null;
 			CouchTaskSerializeContext<T> context = null;
 			lock (this._task_serializer)
 			{
@@ -139,7 +139,7 @@ namespace CouchStore
 			}
 			try
 			{
-				CouchStoreEntry<T> t;
+				CouchConveyEntry<T> t;
 				while (context.WaitingQueue.TryDequeue(out t))
 				{
 					context.Processed(t);
@@ -174,25 +174,25 @@ namespace CouchStore
 		}
 	}
 
-	public class CouchStoreSerializedDispatcherFactory<T> : CouchStoreDispatcherFactory<T> where T : class
+	public class SerializedCouchConveyorDispatcherFactory<T> : CouchConveyorDispatcherFactory<T> where T : class
 	{
 		private CouchTaskSerializer<T> _task_serializer = new CouchTaskSerializer<T>();
 
-		public CouchStoreSerializedDispatcherFactory(string serverAddress, string dbName)
+		public SerializedCouchConveyorDispatcherFactory(string serverAddress, string dbName)
 			: base(serverAddress, dbName)
 		{
 		}
 
-		public override ConcurrentDispatcher<CouchStoreEntry<T>> CreateNew()
+		public override ConcurrentDispatcher<CouchConveyEntry<T>> CreateNew()
 		{
-			return new CouchStoreSerializedDispatcher<T>(_connection_info, _task_serializer);
+			return new CouchConveyorSerializedDispatcher<T>(_connection_info, _task_serializer);
 		}
 	}
 
 	public class OrderedPooledCouchConveyor<T> : PooledCouchConveyor<T> where T : class
 	{
 		public OrderedPooledCouchConveyor(string hostname, string dbname, int workers = 1, int capacity = 0)
-			: base(new CouchStoreSerializedDispatcherFactory<T>(hostname, dbname), workers, capacity)
+			: base(new SerializedCouchConveyorDispatcherFactory<T>(hostname, dbname), workers, capacity)
 		{
 		}
 	}

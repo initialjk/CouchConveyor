@@ -6,7 +6,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace CouchStore
+namespace CouchConveyor
 {
 	internal class ConcurrentWorkingQueue<T>
 	{

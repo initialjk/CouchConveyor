@@ -5,11 +5,11 @@ using System.Runtime.InteropServices;
 // General Information about an assembly is controlled through the following 
 // set of attributes. Change these attribute values to modify the information
 // associated with an assembly.
-[assembly: AssemblyTitle("CouchStore")]
-[assembly: AssemblyDescription("")]
+[assembly: AssemblyTitle("CouchConveyor")]
+[assembly: AssemblyDescription("Simple couchdb wrapper to put entities without any blocking and control. You may just throw entities into CouchConveyor then it will be stored in your database as documents.")]
 [assembly: AssemblyConfiguration("")]
-[assembly: AssemblyCompany("")]
-[assembly: AssemblyProduct("CouchStore")]
+[assembly: AssemblyCompany("Jaekang Lee")]
+[assembly: AssemblyProduct("CouchConveyor")]
 [assembly: AssemblyCopyright("Copyright ©  2016")]
 [assembly: AssemblyTrademark("")]
 [assembly: AssemblyCulture("")]

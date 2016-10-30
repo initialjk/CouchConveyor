@@ -1,4 +1,4 @@
-﻿using CouchStore.Redis;
+﻿using CouchConveyor.Redis;
 using System;
 using System.Collections.Generic;
 using System.Linq;

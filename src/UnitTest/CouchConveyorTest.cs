@@ -2,7 +2,7 @@
 using System;
 using System.Text;
 using System.Collections.Generic;
-using CouchStore;
+using CouchConveyor;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using System.Threading;
 using System.Threading.Tasks;
@@ -57,16 +57,16 @@ namespace UnitTest
 		public TestInner CustomNullValue { get; set; }
 	}
 
-	public class TestWaitEventHandler : CouchStoreWaitEventHandler<TestEntry>
+	public class TestWaitEventHandler : CouchConveyorWaitEventHandler<TestEntry>
 	{
 		public TestWaitEventHandler(EventWaitHandle handle) : base(handle) { }
 	}
 
 	/// <summary>
-	/// Test basic functions of CouchStore Module. To execute this teest, an CouchDb is required on localhost:5984
+	/// Test basic functions of CouchConveyor Module. To execute this teest, an CouchDb is required on localhost:5984
 	/// </summary>
 	[TestClass]
-	public class CouchStoreBasicFunctionTest
+	public class CouchConveyorBasicFunctionTest
 	{
 		static log4net.ILog Logger = log4net.LogManager.GetLogger(System.Reflection.MethodBase.GetCurrentMethod().DeclaringType);
 
@@ -153,14 +153,14 @@ namespace UnitTest
 		[TestMethod]
 		public void TestStoreNestedEntry()
 		{
-			var CouchStore = new OrderedPooledCouchConveyor<TestEntry>(HOSTNAME, DATABASE, 2);
-			CouchStore.StartAll();
+			var CouchConveyor = new OrderedPooledCouchConveyor<TestEntry>(HOSTNAME, DATABASE, 2);
+			CouchConveyor.StartAll();
 
 			ManualResetEvent wait_event = new ManualResetEvent(false);
-			CouchStore.Convey("TestStoreNestedEntry", CreateTestEntry("a-test-entry", 1), new TestWaitEventHandler(wait_event));
+			CouchConveyor.Convey("TestStoreNestedEntry", CreateTestEntry("a-test-entry", 1), new TestWaitEventHandler(wait_event));
 			wait_event.WaitOne(30 * 1000);
 
-			CouchStore.StopAll();
+			CouchConveyor.StopAll();
 		}
 
 		[TestMethod]
@@ -180,15 +180,15 @@ namespace UnitTest
 			entries.Sort(delegate(TestEntry x, TestEntry y) { return x.IntValue.CompareTo(y.IntValue); }); // shuffle randomly
 
 
-			var CouchStore = new OrderedPooledCouchConveyor<TestEntry>(HOSTNAME, DATABASE, 1024);
-			CouchStore.StartAll();
+			var CouchConveyor = new OrderedPooledCouchConveyor<TestEntry>(HOSTNAME, DATABASE, 1024);
+			CouchConveyor.StartAll();
 
 			var exceptions = new ConcurrentBag<Exception>();
 			int semaphore = 0;
 			foreach (var entry in entries)
 			{
 				Interlocked.Increment(ref semaphore);
-				CouchStore.Convey(entry.Id, entry, new InstantCouchStoreEventHandler<TestEntry>(
+				CouchConveyor.Convey(entry.Id, entry, new InstantCouchConveyorEventHandler<TestEntry>(
 					(string id, string rev, TestEntry entity) =>
 					{
 						Interlocked.Decrement(ref semaphore);
@@ -220,7 +220,7 @@ namespace UnitTest
 				}
 			}
 
-			CouchStore.StopAll();
+			CouchConveyor.StopAll();
 
 			Trace.WriteLine(string.Format("Completed to store all test entries. Start checking it now"));
 			var mycouch_pool = new ConcurrentBag<MyCouchStore>(Enumerable.Range(0, 100).Select((i) => new MyCouchStore(HOSTNAME, DATABASE)));

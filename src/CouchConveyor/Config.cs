@@ -7,7 +7,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace CouchStore
+namespace CouchConveyor
 {
 	public abstract class IConfiguration<T>
 	{
@@ -38,7 +38,7 @@ namespace CouchStore
 		}
 	}
 
-	public class CouchStoreConfigManager<T> : IDisposable where T : IConfiguration<T>
+	public class CouchBasedConfigManager<T> : IDisposable where T : IConfiguration<T>
 	{
 		static log4net.ILog Logger = log4net.LogManager.GetLogger(System.Reflection.MethodBase.GetCurrentMethod().DeclaringType);
 
@@ -46,7 +46,7 @@ namespace CouchStore
 		private CancellationTokenSource _cancellation;
 		public T Config { get; private set; }
 
-		public CouchStoreConfigManager(T instance = null)
+		public CouchBasedConfigManager(T instance = null)
 		{
 			if (instance != null)
 			{

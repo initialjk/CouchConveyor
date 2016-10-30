@@ -3,19 +3,28 @@ Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio 2013
 VisualStudioVersion = 12.0.21005.1
 MinimumVisualStudioVersion = 10.0.40219.1
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CouchStore", "CouchStore\CouchStore.csproj", "{976908B4-64C0-4A96-99F4-C387C8056F26}"
-EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "UnitTest", "UnitTest\UnitTest.csproj", "{EB22FA57-CF63-47A4-B99E-7761E3EFCB52}"
 	ProjectSection(ProjectDependencies) = postProject
+		{977F4032-7095-466A-AE2A-F01743706187} = {977F4032-7095-466A-AE2A-F01743706187}
 		{976908B4-64C0-4A96-99F4-C387C8056F26} = {976908B4-64C0-4A96-99F4-C387C8056F26}
 	EndProjectSection
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RedisToCouchReplicator", "RedisToCouchReplicator\RedisToCouchReplicator.csproj", "{44A2A8A8-7B69-496E-BCC7-D9FF4FAEAA69}"
 	ProjectSection(ProjectDependencies) = postProject
+		{977F4032-7095-466A-AE2A-F01743706187} = {977F4032-7095-466A-AE2A-F01743706187}
 		{976908B4-64C0-4A96-99F4-C387C8056F26} = {976908B4-64C0-4A96-99F4-C387C8056F26}
 	EndProjectSection
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CouchStore.Redis", "CouchStore.Redis\CouchStore.Redis.csproj", "{977F4032-7095-466A-AE2A-F01743706187}"
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = ".nuget", ".nuget", "{C571146B-9A3E-440E-AFB5-B20A0947A71A}"
+	ProjectSection(SolutionItems) = preProject
+		.nuget\NuGet.Config = .nuget\NuGet.Config
+		.nuget\NuGet.exe = .nuget\NuGet.exe
+		.nuget\NuGet.targets = .nuget\NuGet.targets
+	EndProjectSection
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CouchConveyor", "CouchConveyor\CouchConveyor.csproj", "{976908B4-64C0-4A96-99F4-C387C8056F26}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CouchConveyor.Redis", "CouchConveyor.Redis\CouchConveyor.Redis.csproj", "{977F4032-7095-466A-AE2A-F01743706187}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -23,18 +32,16 @@ Global
 		Release|Any CPU = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{EB22FA57-CF63-47A4-B99E-7761E3EFCB52}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{EB22FA57-CF63-47A4-B99E-7761E3EFCB52}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{EB22FA57-CF63-47A4-B99E-7761E3EFCB52}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{44A2A8A8-7B69-496E-BCC7-D9FF4FAEAA69}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{44A2A8A8-7B69-496E-BCC7-D9FF4FAEAA69}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{44A2A8A8-7B69-496E-BCC7-D9FF4FAEAA69}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{976908B4-64C0-4A96-99F4-C387C8056F26}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{976908B4-64C0-4A96-99F4-C387C8056F26}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{976908B4-64C0-4A96-99F4-C387C8056F26}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{976908B4-64C0-4A96-99F4-C387C8056F26}.Release|Any CPU.Build.0 = Release|Any CPU
-		{EB22FA57-CF63-47A4-B99E-7761E3EFCB52}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{EB22FA57-CF63-47A4-B99E-7761E3EFCB52}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{EB22FA57-CF63-47A4-B99E-7761E3EFCB52}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{EB22FA57-CF63-47A4-B99E-7761E3EFCB52}.Release|Any CPU.Build.0 = Release|Any CPU
-		{44A2A8A8-7B69-496E-BCC7-D9FF4FAEAA69}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{44A2A8A8-7B69-496E-BCC7-D9FF4FAEAA69}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{44A2A8A8-7B69-496E-BCC7-D9FF4FAEAA69}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{44A2A8A8-7B69-496E-BCC7-D9FF4FAEAA69}.Release|Any CPU.Build.0 = Release|Any CPU
 		{977F4032-7095-466A-AE2A-F01743706187}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{977F4032-7095-466A-AE2A-F01743706187}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{977F4032-7095-466A-AE2A-F01743706187}.Release|Any CPU.ActiveCfg = Release|Any CPU

@@ -1,4 +1,4 @@
-﻿using CouchStore;
+﻿using CouchConveyor;
 using ServiceStack.Redis;
 using System;
 using System.Collections.Concurrent;
@@ -8,14 +8,14 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace CouchStore.Redis
+namespace CouchConveyor.Redis
 {
 	public class Replicator : IDisposable
 	{
 		static log4net.ILog Logger = log4net.LogManager.GetLogger(System.Reflection.MethodBase.GetCurrentMethod().DeclaringType);
 
 		private CancellationTokenSource _cancellation = null;
-		private CouchStoreConfigManager<ReplicatorConfiguration> _config_manager = new CouchStoreConfigManager<ReplicatorConfiguration>();
+		private CouchBasedConfigManager<ReplicatorConfiguration> _config_manager = new CouchBasedConfigManager<ReplicatorConfiguration>();
 		private List<KeyValuePair<string, RedisPubSubServer>> _subscribers = new List<KeyValuePair<string, RedisPubSubServer>>();
 		private ConcurrentDictionary<string, OrderedPooledCouchConveyor<string>> _couch_stores = new ConcurrentDictionary<string, OrderedPooledCouchConveyor<string>>();
 
@@ -56,7 +56,7 @@ namespace CouchStore.Redis
 
 				foreach (var r in this.Config.HashReplications)
 				{
-					GetCouchStore(r.CouchTargetDatabase);
+					GetCouchConveyor(r.CouchTargetDatabase);
 				}
 				foreach (var s in this._couch_stores.Values)
 				{
@@ -70,7 +70,7 @@ namespace CouchStore.Redis
 			}
 		}
 
-		public OrderedPooledCouchConveyor<string> GetCouchStore(string dbname)
+		public OrderedPooledCouchConveyor<string> GetCouchConveyor(string dbname)
 		{
 			return _couch_stores.GetOrAdd(dbname, (key) =>
 			{
@@ -99,11 +99,11 @@ namespace CouchStore.Redis
 		{
 			using (var redis = _redis_pool.GetReadOnlyClient())
 			{
-				var store = GetCouchStore(couch_dbname);
+				var conveyor = GetCouchConveyor(couch_dbname);
 				string value = redis.GetValueFromHash(redis_hashname, redis_hashkey);
 				if (value != null)
 				{
-					store.Convey(redis_hashkey, value);
+					conveyor.Convey(redis_hashkey, value);
 					return true;
 				}
 				else
@@ -117,13 +117,13 @@ namespace CouchStore.Redis
 		{
 			using (var redis = _redis_pool.GetReadOnlyClient())
 			{
-				var store = GetCouchStore(couch_dbname);
+				var conveyor = GetCouchConveyor(couch_dbname);
 				if (redis.GetHashCount(redis_hashname) > 0)
 				{
 					var dictionary = redis.GetAllEntriesFromHash(redis_hashname);
 					foreach (var e in dictionary)
 					{
-						store.Convey(e.Key, e.Value);
+						conveyor.Convey(e.Key, e.Value);
 					}
 					Logger.DebugFormat("Total {0} entries of hash {1} is replicated to couchdb {2}", dictionary.Count, redis_hashname, couch_dbname);
 					return dictionary.Count;
