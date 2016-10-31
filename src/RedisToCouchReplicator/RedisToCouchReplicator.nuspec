@@ -1,0 +1,19 @@
+<?xml version="1.0"?>
+<package >
+  <metadata>
+    <id>$id$</id>
+    <version>$version$</version>
+    <title>$title$</title>
+    <authors>$author$</authors>
+    <owners>$author$</owners>
+    <projectUrl>http://github.com/initialjk/CouchConveyor</projectUrl>
+    <requireLicenseAcceptance>false</requireLicenseAcceptance>
+    <description>$description$</description>
+    <releaseNotes>Make this excutable on place.</releaseNotes>
+    <copyright>Copyright 2016</copyright>
+    <tags>CouchDB Redis Replicator</tags>
+  </metadata>
+  <files>
+	<file src="..\..\out\Release\NugetLibraryCollector.exe" target="lib\net45" />
+  </files>
+</package>

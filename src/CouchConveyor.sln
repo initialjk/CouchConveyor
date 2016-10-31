@@ -12,6 +12,7 @@ EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RedisToCouchReplicator", "RedisToCouchReplicator\RedisToCouchReplicator.csproj", "{44A2A8A8-7B69-496E-BCC7-D9FF4FAEAA69}"
 	ProjectSection(ProjectDependencies) = postProject
 		{977F4032-7095-466A-AE2A-F01743706187} = {977F4032-7095-466A-AE2A-F01743706187}
+		{D20843A8-2F4D-4D6E-9D2B-FB0B079D5DCE} = {D20843A8-2F4D-4D6E-9D2B-FB0B079D5DCE}
 		{976908B4-64C0-4A96-99F4-C387C8056F26} = {976908B4-64C0-4A96-99F4-C387C8056F26}
 	EndProjectSection
 EndProject
@@ -25,6 +26,8 @@ EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CouchConveyor", "CouchConveyor\CouchConveyor.csproj", "{976908B4-64C0-4A96-99F4-C387C8056F26}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CouchConveyor.Redis", "CouchConveyor.Redis\CouchConveyor.Redis.csproj", "{977F4032-7095-466A-AE2A-F01743706187}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "NugetLibraryCollector", "NugetLibraryCollector\NugetLibraryCollector.csproj", "{D20843A8-2F4D-4D6E-9D2B-FB0B079D5DCE}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -46,6 +49,10 @@ Global
 		{977F4032-7095-466A-AE2A-F01743706187}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{977F4032-7095-466A-AE2A-F01743706187}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{977F4032-7095-466A-AE2A-F01743706187}.Release|Any CPU.Build.0 = Release|Any CPU
+		{D20843A8-2F4D-4D6E-9D2B-FB0B079D5DCE}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{D20843A8-2F4D-4D6E-9D2B-FB0B079D5DCE}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{D20843A8-2F4D-4D6E-9D2B-FB0B079D5DCE}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{D20843A8-2F4D-4D6E-9D2B-FB0B079D5DCE}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
