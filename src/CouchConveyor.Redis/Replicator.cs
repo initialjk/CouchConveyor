@@ -10,6 +10,21 @@ using System.Threading.Tasks;
 
 namespace CouchConveyor.Redis
 {
+	public interface IChangeNotificationHandler
+	{
+		void OnNotified(string channel, string message);
+	}
+
+	public class InformedChangeNotificationHandler : IChangeNotificationHandler
+	{
+		public ReplicatorConfiguration.Replication ReplicationConfig { get; set; }
+		public Replicator Replicator { get; set; }
+
+		public virtual void OnNotified(string channel, string message)
+		{
+		}
+	}
+
 	public class Replicator : IDisposable
 	{
 		static log4net.ILog Logger = log4net.LogManager.GetLogger(System.Reflection.MethodBase.GetCurrentMethod().DeclaringType);
@@ -34,7 +49,7 @@ namespace CouchConveyor.Redis
 			}
 
 			_config_manager.Dispose();
-			
+
 			foreach (var s in _couch_stores)
 			{
 				s.Value.Dispose();
@@ -51,6 +66,7 @@ namespace CouchConveyor.Redis
 			{
 				this.Config = this._config_manager.Config;
 
+				// TODO: Make this to reconciable
 				this._redis_pool = new PooledRedisClientManager(this.Config.RedisConnectionPoolSize, this.Config.RedisPoolTimeoutSeconds, this.Config.RedisServers);
 				Logger.InfoFormat("Redis pool is initiailzed for {0} with size={1}, timeout={2}", this.Config.RedisServers, this.Config.RedisConnectionPoolSize, this.Config.RedisPoolTimeoutSeconds);
 
@@ -79,9 +95,9 @@ namespace CouchConveyor.Redis
 			});
 		}
 
-		public RedisPubSubServer Subscribe(string channel)
+		public RedisPubSubServer Subscribe(string channel, Action<string, string> message_handler)
 		{
-			var subscriber = new RedisPubSubServer(this._redis_pool, channel) { OnMessage = this.OnSubscribeMessage };
+			var subscriber = new RedisPubSubServer(this._redis_pool, channel) { OnMessage = message_handler };
 			subscriber.Start();
 
 			Logger.InfoFormat("Subscribe Redis channel: {0}", channel);
@@ -90,9 +106,37 @@ namespace CouchConveyor.Redis
 			return subscriber;
 		}
 
-		public void OnSubscribeMessage(string key, string message)
+		public void SubscribeForReplication(ReplicatorConfiguration.Replication r)
 		{
-			Logger.DebugFormat("Message recevied [{0}]: {1}", key, message);
+			if (false == string.IsNullOrWhiteSpace(r.ChangeNotificationChannel))
+			{
+				Type cls = AppDomain.CurrentDomain.GetAssemblies().Select((a) => a.GetType(r.ChangeNotificationHandlerClass)).First((t) => t != null);
+				if (cls == null)
+				{
+					throw new ArgumentException("Can't create handler due to invalid class name: " + r.ChangeNotificationHandlerClass);
+				}
+				else if (false == typeof(IChangeNotificationHandler).IsAssignableFrom(cls))
+				{
+					throw new ArgumentException("Class does not inherit IChangeNotificationHandler: " + r.ChangeNotificationHandlerClass);
+				}
+				else
+				{
+					var constructor = cls.GetConstructor(new Type[] { });
+					if (constructor == null)
+					{
+						throw new ArgumentException("Class does not have default constructor without argument: " + r.ChangeNotificationHandlerClass);
+					}
+
+					var handler = constructor.Invoke(new object[] { }) as IChangeNotificationHandler;
+					if (handler is InformedChangeNotificationHandler)
+					{
+						var informed_handler = handler as InformedChangeNotificationHandler;
+						informed_handler.Replicator = this;
+						informed_handler.ReplicationConfig = r;
+					}
+					Subscribe(r.ChangeNotificationChannel, handler.OnNotified);
+				}
+			}
 		}
 
 		public bool CopyHashValue(string redis_hashname, string redis_hashkey, string couch_dbname)
@@ -111,6 +155,12 @@ namespace CouchConveyor.Redis
 					return false;
 				}
 			}
+		}
+
+		public void DeleteCouchDocument(string couch_dbname, string document_id)
+		{
+			var conveyor = GetCouchConveyor(couch_dbname);
+			conveyor.Convey(document_id, null);
 		}
 
 		public int CopyHash(string redis_hashname, string couch_dbname)
@@ -148,7 +198,7 @@ namespace CouchConveyor.Redis
 				if (this.Config.HashReplicationIntervalSeconds > 0)
 				{
 					await Task.Delay((int)(this.Config.HashReplicationIntervalSeconds * 1000));
-					
+
 					tasks = this.Config.HashReplications.Select((r) => Task.Run(() => CopyHash(r.RedisSourceKey, r.CouchTargetDatabase))).ToList();
 					++iteration;
 				}
@@ -193,18 +243,31 @@ namespace CouchConveyor.Redis
 			var ct = _cancellation.Token;
 
 			Task.Factory.StartNew(async () => await this.StartIntervalReplication(_cancellation.Token));
-
-			foreach (var ch in this.Config.ChannelsToSubscribe)
+			foreach (var r in this.Config.HashReplications)
 			{
-				Subscribe(ch);
+				try
+				{
+					SubscribeForReplication(r);
+				}
+				catch (Exception ex)
+				{
+					var message = ex.Message;
+					if (ex is ArgumentNullException)
+					{
+						message = "There is missing configuration.";
+					}
+					Logger.ErrorFormat("Can't subscribe channel '{0}' to replicate for database '{1}' - {2}", r.ChangeNotificationChannel, r.CouchTargetDatabase, message);
+				}
 			}
 
 			ct.Register(() => StopInternal());
 			return _cancellation;
 		}
 
-		private void StopInternal() {
-			if (_cancellation == null) {
+		private void StopInternal()
+		{
+			if (_cancellation == null)
+			{
 				return;
 			}
 
@@ -223,12 +286,14 @@ namespace CouchConveyor.Redis
 			_cancellation = null;
 		}
 
-		public bool Stop() 
+		public bool Stop()
 		{
-			if( _cancellation == null) {
+			if (_cancellation == null)
+			{
 				return false;
 			}
-			if (_cancellation.IsCancellationRequested) {
+			if (_cancellation.IsCancellationRequested)
+			{
 				return true;
 			}
 

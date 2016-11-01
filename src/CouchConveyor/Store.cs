@@ -143,9 +143,20 @@ namespace CouchConveyor
 		{
 			try
 			{
-				var header = await (revision == null ?
-					this.Client.Documents.PutAsync(entry.Id, entry.Json) :
-					this.Client.Documents.PutAsync(entry.Id, revision, entry.Json));
+				DocumentHeaderResponse header = null;
+				if (entry.Json == null && entry.Entity == null) 
+				{
+					header = await this.Client.Documents.DeleteAsync(entry.Id, revision);
+				}
+				else if(revision != null)
+				{
+					header = await this.Client.Documents.PutAsync(entry.Id, revision, entry.Json);
+				}
+				else 
+				{
+					header = await this.Client.Documents.PutAsync(entry.Id, entry.Json);
+				}
+
 				if (header.StatusCode == System.Net.HttpStatusCode.Conflict && entry.Overwrite)
 				{
 					return null;  // In this case, we will retry this outside so it's expected exception.
@@ -315,7 +326,7 @@ namespace CouchConveyor
 
 		public void Convey(string id, T value, CouchConveyorEventHandler<T> handler = null)
 		{
-			string json = Serialize(value); // Serialize on synchronized context to store 'as-is' status
+			string json = (value != null)? Serialize(value): null; // Serialize on synchronized context to store 'as-is' status
 			this.AddEntry(new CouchConveyEntry<T>(id, value, json, true, handler), -1); // find best method to call this. Current method AddEntry can block
 		}
 	}

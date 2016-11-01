@@ -13,11 +13,12 @@ namespace CouchConveyor.Redis
 		{
 			public string RedisSourceKey { get; set; }
 			public string CouchTargetDatabase { get; set; }
+			public string ChangeNotificationChannel { get; set; }
+			public string ChangeNotificationHandlerClass { get; set; }
 		}
 
 		public string CouchDbEndpoint { get; set; }
 		public string[] RedisServers { get; set; }
-		public string[] ChannelsToSubscribe { get; set; }
 		public Replication[] HashReplications { get; set; }
 		public float HashReplicationIntervalSeconds { get; set; }
 
@@ -33,7 +34,6 @@ namespace CouchConveyor.Redis
 			CouchDbEndpoint = "http://localhost:5984";
 			RedisServers = new string[] { "localhost" };
 			HashReplications = new Replication[] { };
-			ChannelsToSubscribe = new string[] { };
 			HashReplicationIntervalSeconds = 0.0f;
 
 			WriteScaleDefault = Environment.ProcessorCount * 4;

@@ -163,6 +163,88 @@ namespace UnitTest
 			CouchConveyor.StopAll();
 		}
 
+		public class TestMonitor<T> where T : class
+		{
+			private /*volatile*/ int _semaphore;
+			public int Remains { get { return _semaphore; } }
+			public DateTime Started { get; set; }
+			public ConcurrentBag<Exception> Exceptions { get; private set; }
+			public float TimeoutSeconds { get; set; }
+
+			public TestMonitor(float timeout_seconds = 30)
+			{
+				_semaphore = 0;
+				Started = DateTime.UtcNow;
+				Exceptions = new ConcurrentBag<Exception>();
+				TimeoutSeconds = timeout_seconds;
+			}
+
+			public InstantCouchConveyorEventHandler<T> StartOne()
+			{
+				Interlocked.Increment(ref this._semaphore);
+				return new InstantCouchConveyorEventHandler<T>(this.OnSuccessOne, this.OnFailedOne);
+			}
+
+			public virtual void OnSuccessOne(string id, string rev, T entity)
+			{
+				FinishOne();
+			}
+
+			public virtual void OnFailedOne(string id, T entity, Exception ex)
+			{
+				FinishOne();
+				this.Exceptions.Add(ex);
+			}
+
+			protected void FinishOne()
+			{
+				Interlocked.Decrement(ref this._semaphore);
+			}
+
+			public int WaitToFinish()
+			{
+				var wait_started = DateTime.UtcNow;
+				var remains = this.Remains;
+
+				while (_semaphore > 0)
+				{
+					int snapshot = _semaphore;
+					Thread.Sleep(1000);
+					var time_from_start = DateTime.UtcNow - Started;
+					Trace.WriteLine(string.Format("[{2}.{3}] {0} tasks are remaining. {1} is processed", snapshot, remains - snapshot, time_from_start.Seconds, time_from_start.Milliseconds));
+					remains = snapshot;
+
+					if (Exceptions.Count > 0)
+					{
+						throw Exceptions.First();
+					}
+					if ((DateTime.UtcNow - wait_started).TotalMilliseconds > (int)this.TimeoutSeconds * 1000.0f)
+					{
+						throw new TimeoutException("Too long times to process, still remains: " + _semaphore);
+					}
+				}
+				return _semaphore;
+			}
+		}
+
+		public class TestMonitorForDelete<T> : TestMonitor<T> where T : class
+		{
+			public override void OnFailedOne(string id, T entity, Exception ex)
+			{
+				FinishOne();
+
+				var mcrex = ex as MyCouchResponseException;
+				if (mcrex != null || mcrex.HttpStatus == System.Net.HttpStatusCode.NotFound || "DELETE".Equals(mcrex.HttpMethod))
+				{
+					// Skip this
+				}
+				else 
+				{
+					this.Exceptions.Add(ex);
+				}
+			}
+		}
+
 		[TestMethod]
 		public void TestMassiveStoreEntries()
 		{
@@ -178,72 +260,45 @@ namespace UnitTest
 				}
 			}
 			entries.Sort(delegate(TestEntry x, TestEntry y) { return x.IntValue.CompareTo(y.IntValue); }); // shuffle randomly
-
-
+			
 			var CouchConveyor = new OrderedPooledCouchConveyor<TestEntry>(HOSTNAME, DATABASE, 1024);
 			CouchConveyor.StartAll();
 
-			var exceptions = new ConcurrentBag<Exception>();
-			int semaphore = 0;
+			var monitor = new TestMonitor<TestEntry>();
+
 			foreach (var entry in entries)
 			{
-				Interlocked.Increment(ref semaphore);
-				CouchConveyor.Convey(entry.Id, entry, new InstantCouchConveyorEventHandler<TestEntry>(
-					(string id, string rev, TestEntry entity) =>
-					{
-						Interlocked.Decrement(ref semaphore);
-					},
-					(string id, TestEntry entity, Exception ex) =>
-					{
-						Interlocked.Decrement(ref semaphore);
-						exceptions.Add(ex);
-					}
-				));
+				CouchConveyor.Convey(entry.Id, entry, monitor.StartOne());
 			};
 
-			DateTime wait_started = DateTime.UtcNow;
-			int remains = semaphore;
-			while (semaphore > 0)
-			{
-				int snapshot = semaphore;
-				Thread.Sleep(1000);
-				Trace.WriteLine(string.Format("{0} tasks are remaining. {1} is processed", snapshot, remains - snapshot));
-				remains = snapshot;
-
-				if (exceptions.Count > 0)
-				{
-					throw exceptions.First();
-				}
-				if ((DateTime.UtcNow - wait_started).Milliseconds > 30 * 1000)
-				{
-					throw new TimeoutException("Too long times to process");
-				}
-			}
-
-			CouchConveyor.StopAll();
+			monitor.WaitToFinish();
 
 			Trace.WriteLine(string.Format("Completed to store all test entries. Start checking it now"));
 			var mycouch_pool = new ConcurrentBag<MyCouchStore>(Enumerable.Range(0, 100).Select((i) => new MyCouchStore(HOSTNAME, DATABASE)));
+			var entries_to_remove = new ConcurrentBag<TestEntry>();
 
-			semaphore = iteration;
-			var tasks = entries.Select((entry) => Task.Run(async () =>
+			// Async tasks are suppressing Assert exceptions
+			Parallel.ForEach(entries, new ParallelOptions { MaxDegreeOfParallelism = 100 }, (entry) =>
 			{
 				MyCouchStore couchdb;
-				while (false == mycouch_pool.TryTake(out couchdb))
+				if (false == mycouch_pool.TryTake(out couchdb)) // Actually, this condition is not required. Just to avoid CS0165
 				{
-					await Task.Delay(100);
+					SpinWait.SpinUntil(() => mycouch_pool.TryTake(out couchdb));
 				}
-				var dbentry = await couchdb.GetByIdAsync<TestEntry>(entry.Id);
+				var task = couchdb.GetByIdAsync<TestEntry>(entry.Id);
+				var dbentry = task.Result;
 				mycouch_pool.Add(couchdb);
 				couchdb = null;
 
-				Assert.AreEqual(entry.Id, dbentry.Id);
+				Assert.IsNotNull(dbentry);
+
 				var last_entry = entries.Where((e) => e.Id == entry.Id).Last();
 				if (last_entry.IntValue != dbentry.IntValue)
 				{
 					var es = entries.Where((e) => e.Id == entry.Id);
-					Trace.WriteLine(string.Format("Entry '{0}' has stored incorrectly: {1}", entry.Id, es.ToString()));
+					Trace.WriteLine(string.Format("Entry '{0}' has stored incorrectly: {1} for {2}", entry.Id, dbentry.IntValue, string.Join(",", es.Select((e)=>e.IntValue))));
 				}
+				Assert.AreEqual(entry.Id, dbentry.Id);
 				Assert.AreEqual(last_entry.IntValue, dbentry.IntValue);
 				Assert.AreEqual(last_entry.IntNullValue, dbentry.IntNullValue);
 				Assert.AreEqual(last_entry.StringValue, dbentry.StringValue);
@@ -252,9 +307,33 @@ namespace UnitTest
 				Assert.AreEqual(last_entry.CustomNullValue, dbentry.CustomNullValue);
 				Assert.AreEqual(last_entry.DateTimeValue.ToString(), dbentry.DateTimeValue.ToString());
 				CollectionAssert.AreEqual(last_entry.ListValue, dbentry.ListValue);
-			}));
 
-			Task.WaitAll(tasks.ToArray());
+				if (last_entry.IntValue == entry.IntValue)
+				{
+					entries_to_remove.Add(entry);
+				}
+			});
+						
+			var delete_monitor = new TestMonitorForDelete<TestEntry>();
+			Parallel.ForEach(entries_to_remove, (entry) => CouchConveyor.Convey(entry.Id, null, delete_monitor.StartOne()));						
+			delete_monitor.WaitToFinish();
+			CouchConveyor.StopAll();
+
+			Parallel.ForEach(entries, new ParallelOptions { MaxDegreeOfParallelism = 100 }, (entry) =>
+			{
+				MyCouchStore couchdb;
+				if (false == mycouch_pool.TryTake(out couchdb))
+				{
+					SpinWait.SpinUntil(() => mycouch_pool.TryTake(out couchdb));
+				}
+				var task = couchdb.GetByIdAsync<TestEntry>(entry.Id);
+				var dbentry = task.Result; 
+				mycouch_pool.Add(couchdb);
+				couchdb = null;
+
+				Assert.IsNull(dbentry);
+			});
+
 			foreach (var c in mycouch_pool)
 			{
 				c.Dispose();
